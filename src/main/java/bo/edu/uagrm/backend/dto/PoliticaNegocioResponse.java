@@ -7,6 +7,7 @@ import bo.edu.uagrm.backend.model.PoliticaNegocio;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public class PoliticaNegocioResponse {
 
@@ -19,6 +20,7 @@ public class PoliticaNegocioResponse {
     private List<NodoFlujo> nodos;
     private List<ConexionFlujo> conexiones;
     private String diagrama;
+    private Map<String, Object> areaForms;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -36,6 +38,7 @@ public class PoliticaNegocioResponse {
         response.nodos = politica.getNodos();
         response.conexiones = politica.getConexiones();
         response.diagrama = politica.getDiagrama();
+        response.areaForms = politica.getAreaForms();
         response.createdAt = politica.getCreatedAt();
         response.updatedAt = politica.getUpdatedAt();
         return response;
@@ -127,5 +130,13 @@ public class PoliticaNegocioResponse {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Map<String, Object> getAreaForms() {
+        return areaForms;
+    }
+
+    public void setAreaForms(Map<String, Object> areaForms) {
+        this.areaForms = areaForms;
     }
 }

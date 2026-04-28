@@ -12,6 +12,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Document(collection = "politicas_negocio")
 public class PoliticaNegocio {
@@ -43,6 +44,8 @@ public class PoliticaNegocio {
 
     @NotBlank(message = "El diagrama BPMN es obligatorio")
     private String diagrama;
+
+    private Map<String, Object> areaForms; // Formularios por área definidos en el diagrama
 
     @CreatedDate
     private LocalDateTime createdAt;
@@ -132,5 +135,13 @@ public class PoliticaNegocio {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Map<String, Object> getAreaForms() {
+        return areaForms;
+    }
+
+    public void setAreaForms(Map<String, Object> areaForms) {
+        this.areaForms = areaForms;
     }
 }
