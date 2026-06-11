@@ -1,41 +1,64 @@
 package bo.edu.uagrm.backend.services;
 
 import bo.edu.uagrm.backend.dto.PoliticaNegocioCreateRequest;
+import bo.edu.uagrm.backend.dto.PoliticaColaboradoresResponse;
+import bo.edu.uagrm.backend.dto.PoliticaColaboradoresUpdateRequest;
 import bo.edu.uagrm.backend.dto.PoliticaNegocioEditRequest;
+import bo.edu.uagrm.backend.dto.UsuarioResponse;
+import bo.edu.uagrm.backend.exception.ConflictException;
 import bo.edu.uagrm.backend.model.ConexionFlujo;
 import bo.edu.uagrm.backend.exception.NotFoundException;
+import bo.edu.uagrm.backend.exception.UnauthorizedException;
 import bo.edu.uagrm.backend.model.EstadoPolitica;
 import bo.edu.uagrm.backend.model.NodoFlujo;
 import bo.edu.uagrm.backend.model.PoliticaNegocio;
+import bo.edu.uagrm.backend.model.Rol;
 import bo.edu.uagrm.backend.model.TipoConexionFlujo;
+import bo.edu.uagrm.backend.model.Usuario;
 import bo.edu.uagrm.backend.repository.PoliticaNegocioRepository;
+import bo.edu.uagrm.backend.repository.RolRepository;
+import bo.edu.uagrm.backend.repository.UsuarioRepository;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class PoliticaNegocioService {
+    private static final String LEGACY_SYSTEM_OWNER_ID = "system";
 
     private final PoliticaNegocioRepository politicaNegocioRepository;
+    private final UsuarioRepository usuarioRepository;
+    private final RolRepository rolRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public PoliticaNegocioService(PoliticaNegocioRepository politicaNegocioRepository) {
+    public PoliticaNegocioService(
+            PoliticaNegocioRepository politicaNegocioRepository,
+            UsuarioRepository usuarioRepository,
+            RolRepository rolRepository
+    ) {
         this.politicaNegocioRepository = politicaNegocioRepository;
+        this.usuarioRepository = usuarioRepository;
+        this.rolRepository = rolRepository;
     }
 
     public PoliticaNegocio crear(PoliticaNegocioCreateRequest request) {
+        Usuario solicitante = buscarAdministrador(request.getUsuarioSolicitanteId());
         PoliticaNegocio politica = new PoliticaNegocio();
         politica.setNombre(normalizarTexto(request.getNombre()));
         politica.setDescripcion(normalizarTexto(request.getDescripcion()));
         politica.setDiagrama(request.getDiagrama());
         aplicarModeloFlujoDesdeDiagrama(politica, request.getDiagrama());
-        politica.setCreadorUsuarioId("system"); // Usar un usuario por defecto
+        politica.setCreadorUsuarioId(solicitante.getId());
+        politica.setColaboradoresUsuarioIds(new ArrayList<>());
         politica.setEstado(EstadoPolitica.EDITAR);
 
         return politicaNegocioRepository.save(politica);
@@ -43,6 +66,7 @@ public class PoliticaNegocioService {
 
     public PoliticaNegocio editar(String id, PoliticaNegocioEditRequest request) {
         PoliticaNegocio politica = obtenerPorId(id);
+        politica = validarPermisoEdicion(politica, request.getUsuarioSolicitanteId());
 
         if (StringUtils.hasText(request.getNombre())) {
             politica.setNombre(normalizarTexto(request.getNombre()));
@@ -65,14 +89,26 @@ public class PoliticaNegocioService {
     }
 
     public PoliticaNegocio obtenerPorId(String id) {
-        return politicaNegocioRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Politica de negocio no encontrada"));
+        return obtenerPorId(id, null);
     }
 
-    public void eliminar(String id) {
-        if (!politicaNegocioRepository.existsById(id)) {
-            throw new NotFoundException("Politica de negocio no encontrada");
+    public PoliticaNegocio obtenerPorId(String id, String usuarioSolicitanteId) {
+        PoliticaNegocio politica = politicaNegocioRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Politica de negocio no encontrada"));
+
+        if (StringUtils.hasText(usuarioSolicitanteId)) {
+            Usuario usuario = usuarioRepository.findById(usuarioSolicitanteId.trim()).orElse(null);
+            if (esAdministrador(usuario)) {
+                politica = adoptarPropietarioLegacySiCorresponde(politica, usuarioSolicitanteId.trim());
+            }
         }
+
+        return politica;
+    }
+
+    public void eliminar(String id, String usuarioSolicitanteId) {
+        PoliticaNegocio politica = obtenerPorId(id);
+        politica = validarPermisoPropietario(politica, usuarioSolicitanteId);
         politicaNegocioRepository.deleteById(id);
     }
 
@@ -82,8 +118,172 @@ public class PoliticaNegocioService {
         return politicaNegocioRepository.save(politica);
     }
 
+    public PoliticaColaboradoresResponse obtenerColaboradores(String politicaId, String usuarioSolicitanteId) {
+        PoliticaNegocio politica = obtenerPorId(politicaId);
+        politica = validarPermisoEdicion(politica, usuarioSolicitanteId);
+        return construirRespuestaColaboradores(politica);
+    }
+
+    public List<UsuarioResponse> buscarAdministradoresDisponibles(String politicaId, String usuarioSolicitanteId, String termino) {
+        PoliticaNegocio politica = obtenerPorId(politicaId);
+        politica = validarPermisoEdicion(politica, usuarioSolicitanteId);
+
+        String filtro = normalizarTexto(termino);
+        Set<String> excluidos = new HashSet<>(politica.getColaboradoresUsuarioIds());
+        excluidos.add(politica.getCreadorUsuarioId());
+
+        return usuarioRepository.findAll().stream()
+                .filter(usuario -> !excluidos.contains(usuario.getId()))
+                .filter(this::esAdministrador)
+                .filter(usuario -> coincideBusqueda(usuario, filtro))
+                .sorted(Comparator.comparing(Usuario::getNombre, String.CASE_INSENSITIVE_ORDER))
+                .map(UsuarioResponse::fromEntity)
+                .toList();
+    }
+
+    public PoliticaColaboradoresResponse actualizarColaboradores(String politicaId, PoliticaColaboradoresUpdateRequest request) {
+        PoliticaNegocio politica = obtenerPorId(politicaId);
+        politica = validarPermisoPropietario(politica, request.getUsuarioSolicitanteId());
+
+        List<String> nuevosIds = request.getColaboradoresUsuarioIds() == null
+                ? List.of()
+                : request.getColaboradoresUsuarioIds().stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
+
+        for (String colaboradorId : nuevosIds) {
+            if (colaboradorId.equals(politica.getCreadorUsuarioId())) {
+                throw new ConflictException("El creador ya tiene acceso y no debe agregarse como colaborador");
+            }
+            buscarAdministrador(colaboradorId);
+        }
+
+        politica.setColaboradoresUsuarioIds(new ArrayList<>(nuevosIds));
+        PoliticaNegocio guardada = politicaNegocioRepository.save(politica);
+        return construirRespuestaColaboradores(guardada);
+    }
+
+    public boolean puedeEditar(String politicaId, String usuarioId) {
+        if (!StringUtils.hasText(usuarioId)) {
+            return false;
+        }
+
+        PoliticaNegocio politica = obtenerPorId(politicaId);
+        if (esPropietarioLegacy(politica)) {
+            return esAdministrador(usuarioRepository.findById(usuarioId.trim()).orElse(null));
+        }
+        return tienePermisoEdicion(politica, usuarioId.trim());
+    }
+
+    public UsuarioResponse obtenerUsuarioResumen(String usuarioId) {
+        return usuarioRepository.findById(usuarioId)
+                .map(UsuarioResponse::fromEntity)
+                .orElse(null);
+    }
+
     private String normalizarTexto(String valor) {
         return StringUtils.hasText(valor) ? valor.trim() : valor;
+    }
+
+    private PoliticaColaboradoresResponse construirRespuestaColaboradores(PoliticaNegocio politica) {
+        PoliticaColaboradoresResponse response = new PoliticaColaboradoresResponse();
+        response.setPoliticaId(politica.getId());
+        response.setCreadorUsuarioId(politica.getCreadorUsuarioId());
+        response.setColaboradores(
+                politica.getColaboradoresUsuarioIds().stream()
+                        .map(usuarioRepository::findById)
+                        .filter(java.util.Optional::isPresent)
+                        .map(java.util.Optional::get)
+                        .map(UsuarioResponse::fromEntity)
+                        .sorted(Comparator.comparing(UsuarioResponse::getNombre, String.CASE_INSENSITIVE_ORDER))
+                        .toList()
+        );
+        return response;
+    }
+
+    private PoliticaNegocio validarPermisoEdicion(PoliticaNegocio politica, String usuarioSolicitanteId) {
+        String usuarioId = normalizarId(usuarioSolicitanteId);
+        buscarAdministrador(usuarioId);
+        politica = adoptarPropietarioLegacySiCorresponde(politica, usuarioId);
+        if (!tienePermisoEdicion(politica, usuarioId)) {
+            throw new UnauthorizedException("No tienes permisos para editar esta politica de negocio");
+        }
+        return politica;
+    }
+
+    private PoliticaNegocio validarPermisoPropietario(PoliticaNegocio politica, String usuarioSolicitanteId) {
+        String usuarioId = normalizarId(usuarioSolicitanteId);
+        buscarAdministrador(usuarioId);
+        politica = adoptarPropietarioLegacySiCorresponde(politica, usuarioId);
+        if (!usuarioId.equals(politica.getCreadorUsuarioId())) {
+            throw new UnauthorizedException("Solo el creador de la politica puede gestionar colaboradores o eliminarla");
+        }
+        return politica;
+    }
+
+    private boolean tienePermisoEdicion(PoliticaNegocio politica, String usuarioId) {
+        return usuarioId.equals(politica.getCreadorUsuarioId())
+                || politica.getColaboradoresUsuarioIds().contains(usuarioId);
+    }
+
+    private Usuario buscarAdministrador(String usuarioId) {
+        String normalized = normalizarId(usuarioId);
+        Usuario usuario = usuarioRepository.findById(normalized)
+                .orElseThrow(() -> new NotFoundException("Usuario administrador no encontrado"));
+
+        if (!esAdministrador(usuario)) {
+            throw new UnauthorizedException("Solo administradores autorizados pueden colaborar en politicas");
+        }
+        return usuario;
+    }
+
+    private boolean esAdministrador(Usuario usuario) {
+        if (usuario == null || !StringUtils.hasText(usuario.getRolId())) {
+            return false;
+        }
+
+        Rol rol = rolRepository.findById(usuario.getRolId())
+                .orElse(null);
+        if (rol == null || !StringUtils.hasText(rol.getNombre())) {
+            return false;
+        }
+
+        String nombreRol = rol.getNombre().trim().toLowerCase();
+        return "administrador".equals(nombreRol) || "admin".equals(nombreRol);
+    }
+
+    private boolean coincideBusqueda(Usuario usuario, String filtro) {
+        if (!StringUtils.hasText(filtro)) {
+            return true;
+        }
+        String term = filtro.toLowerCase();
+        String nombre = usuario.getNombre() == null ? "" : usuario.getNombre().toLowerCase();
+        String correo = usuario.getCorreo() == null ? "" : usuario.getCorreo().toLowerCase();
+        return nombre.contains(term) || correo.contains(term);
+    }
+
+    private String normalizarId(String valor) {
+        if (!StringUtils.hasText(valor)) {
+            throw new IllegalArgumentException("El usuario solicitante es obligatorio");
+        }
+        return valor.trim();
+    }
+
+    private PoliticaNegocio adoptarPropietarioLegacySiCorresponde(PoliticaNegocio politica, String usuarioId) {
+        if (!esPropietarioLegacy(politica)) {
+            return politica;
+        }
+
+        politica.setCreadorUsuarioId(usuarioId);
+        politica.getColaboradoresUsuarioIds().removeIf(usuarioId::equals);
+        return politicaNegocioRepository.save(politica);
+    }
+
+    private boolean esPropietarioLegacy(PoliticaNegocio politica) {
+        String creador = politica.getCreadorUsuarioId();
+        return !StringUtils.hasText(creador) || LEGACY_SYSTEM_OWNER_ID.equalsIgnoreCase(creador.trim());
     }
 
     private void aplicarModeloFlujoDesdeDiagrama(PoliticaNegocio politica, String diagrama) {

@@ -1,6 +1,7 @@
 package bo.edu.uagrm.backend.config;
 
 import bo.edu.uagrm.backend.dto.ApiErrorResponse;
+import bo.edu.uagrm.backend.exception.AiServiceException;
 import bo.edu.uagrm.backend.exception.ConflictException;
 import bo.edu.uagrm.backend.exception.NotFoundException;
 import bo.edu.uagrm.backend.exception.UnauthorizedException;
@@ -71,6 +72,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<ApiErrorResponse> handleConstraintViolationException(ConstraintViolationException ex, HttpServletRequest request) {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+    }
+
+    @ExceptionHandler(AiServiceException.class)
+    public ResponseEntity<ApiErrorResponse> handleAiServiceException(AiServiceException ex, HttpServletRequest request) {
+        return buildErrorResponse(HttpStatus.BAD_GATEWAY, ex.getMessage(), request);
     }
 
     @ExceptionHandler(Exception.class)

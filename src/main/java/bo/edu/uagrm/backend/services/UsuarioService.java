@@ -5,6 +5,7 @@ import bo.edu.uagrm.backend.dto.UsuarioUpdateRequest;
 import bo.edu.uagrm.backend.exception.ConflictException;
 import bo.edu.uagrm.backend.exception.NotFoundException;
 import bo.edu.uagrm.backend.exception.UnauthorizedException;
+import bo.edu.uagrm.backend.model.Rol;
 import bo.edu.uagrm.backend.model.Usuario;
 import bo.edu.uagrm.backend.repository.AreaRepository;
 import bo.edu.uagrm.backend.repository.RolRepository;
@@ -38,19 +39,24 @@ public class UsuarioService {
 
     public Usuario guardar(UsuarioRequest request) {
         String correo = normalizarCorreo(request.getCorreo());
+        String rolId = normalizarId(request.getRolId());
+        String areaId = normalizarId(request.getAreaId());
 
         if (usuarioRepository.existsByCorreoIgnoreCase(correo)) {
             throw new ConflictException("Ya existe un usuario con el mismo correo");
         }
 
-        validarRelaciones(request.getRolId(), request.getAreaId());
+        Rol rol = buscarRol(rolId);
+        boolean esCliente = esRolCliente(rol);
+
+        validarArea(areaId, esCliente);
 
         Usuario usuario = new Usuario();
         usuario.setNombre(normalizarTexto(request.getNombre()));
         usuario.setCorreo(correo);
         usuario.setPassword(passwordEncoder.encode(request.getPassword()));
-        usuario.setRolId(request.getRolId().trim());
-        usuario.setAreaId(request.getAreaId().trim());
+        usuario.setRolId(rolId);
+        usuario.setAreaId(esCliente ? null : areaId);
 
         return usuarioRepository.save(usuario);
     }
@@ -67,17 +73,22 @@ public class UsuarioService {
     public Usuario actualizar(String id, UsuarioUpdateRequest request) {
         Usuario existente = buscarPorId(id);
         String correo = normalizarCorreo(request.getCorreo());
+        String rolId = normalizarId(request.getRolId());
+        String areaId = normalizarId(request.getAreaId());
 
         if (usuarioRepository.existsByCorreoIgnoreCaseAndIdNot(correo, id)) {
             throw new ConflictException("Ya existe un usuario con el mismo correo");
         }
 
-        validarRelaciones(request.getRolId(), request.getAreaId());
+        Rol rol = buscarRol(rolId);
+        boolean esCliente = esRolCliente(rol);
+
+        validarArea(areaId, esCliente);
 
         existente.setNombre(normalizarTexto(request.getNombre()));
         existente.setCorreo(correo);
-        existente.setRolId(request.getRolId().trim());
-        existente.setAreaId(request.getAreaId().trim());
+        existente.setRolId(rolId);
+        existente.setAreaId(esCliente ? null : areaId);
 
         if (StringUtils.hasText(request.getPassword())) {
             existente.setPassword(passwordEncoder.encode(request.getPassword()));
@@ -111,13 +122,35 @@ public class UsuarioService {
         return usuario;
     }
 
-    private void validarRelaciones(String rolId, String areaId) {
-        if (!rolRepository.existsById(rolId.trim())) {
-            throw new NotFoundException("Rol no encontrado para el usuario");
+    private Rol buscarRol(String rolId) {
+        if (!StringUtils.hasText(rolId)) {
+            throw new IllegalArgumentException("El rol del usuario es obligatorio");
         }
-        if (!areaRepository.existsById(areaId.trim())) {
+
+        return rolRepository.findById(rolId)
+                .orElseThrow(() -> new NotFoundException("Rol no encontrado para el usuario"));
+    }
+
+    private void validarArea(String areaId, boolean esCliente) {
+        if (esCliente) {
+            return;
+        }
+
+        if (!StringUtils.hasText(areaId)) {
+            throw new IllegalArgumentException("El area del usuario es obligatoria");
+        }
+
+        if (!areaRepository.existsById(areaId)) {
             throw new NotFoundException("Area no encontrada para el usuario");
         }
+    }
+
+    private boolean esRolCliente(Rol rol) {
+        return StringUtils.hasText(rol.getNombre()) && "cliente".equalsIgnoreCase(rol.getNombre().trim());
+    }
+
+    private String normalizarId(String valor) {
+        return StringUtils.hasText(valor) ? valor.trim() : null;
     }
 
     private String normalizarCorreo(String correo) {

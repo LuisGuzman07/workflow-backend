@@ -22,7 +22,6 @@ public class UsuarioRequest {
     @NotBlank(message = "El rol del usuario es obligatorio")
     private String rolId;
 
-    @NotBlank(message = "El area del usuario es obligatoria")
     private String areaId;
 
     public String getNombre() {

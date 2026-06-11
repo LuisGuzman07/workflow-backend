@@ -15,6 +15,9 @@ public class PoliticaNegocioEditRequest {
     @NotBlank(message = "El diagrama BPMN es obligatorio")
     private String diagrama;
 
+    @NotBlank(message = "El usuario solicitante es obligatorio")
+    private String usuarioSolicitanteId;
+
     public String getNombre() {
         return nombre;
     }
@@ -37,5 +40,13 @@ public class PoliticaNegocioEditRequest {
 
     public void setDiagrama(String diagrama) {
         this.diagrama = diagrama;
+    }
+
+    public String getUsuarioSolicitanteId() {
+        return usuarioSolicitanteId;
+    }
+
+    public void setUsuarioSolicitanteId(String usuarioSolicitanteId) {
+        this.usuarioSolicitanteId = usuarioSolicitanteId;
     }
 }
