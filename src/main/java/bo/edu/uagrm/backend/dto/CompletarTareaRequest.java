@@ -17,9 +17,19 @@ public class CompletarTareaRequest {
     private String areaId;
 
     private String nodeId;
+    private String tramiteId;
 
     @NotNull(message = "La respuesta es obligatoria")
     private Map<String, Object> respuesta;
+
+    public String getTramiteId() {
+        return tramiteId;
+    }
+
+    public void setTramiteId(String tramiteId) {
+        this.tramiteId = tramiteId;
+    }
+
 
     public String getUsuarioId() {
         return usuarioId;

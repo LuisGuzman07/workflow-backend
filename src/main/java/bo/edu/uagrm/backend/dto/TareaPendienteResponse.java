@@ -9,6 +9,34 @@ public class TareaPendienteResponse {
     private String politicaNombre;
     private String areaId;
     private AreaForm areaForm;
+    private String tramiteId;
+    private String tramiteCodigo;
+    private String clienteNombre;
+
+    public String getTramiteId() {
+        return tramiteId;
+    }
+
+    public void setTramiteId(String tramiteId) {
+        this.tramiteId = tramiteId;
+    }
+
+    public String getTramiteCodigo() {
+        return tramiteCodigo;
+    }
+
+    public void setTramiteCodigo(String tramiteCodigo) {
+        this.tramiteCodigo = tramiteCodigo;
+    }
+
+    public String getClienteNombre() {
+        return clienteNombre;
+    }
+
+    public void setClienteNombre(String clienteNombre) {
+        this.clienteNombre = clienteNombre;
+    }
+
 
     public static class AreaForm {
         private String laneId;

@@ -1,7 +1,6 @@
 package bo.edu.uagrm.backend.services;
 
 import bo.edu.uagrm.backend.dto.CompletarTareaRequest;
-import bo.edu.uagrm.backend.dto.SeguimientoTramiteResponse;
 import bo.edu.uagrm.backend.dto.TareaPendienteResponse;
 import bo.edu.uagrm.backend.exception.ConflictException;
 import bo.edu.uagrm.backend.exception.NotFoundException;
@@ -9,16 +8,22 @@ import bo.edu.uagrm.backend.model.PoliticaNegocio;
 import bo.edu.uagrm.backend.model.Rol;
 import bo.edu.uagrm.backend.model.TareaCompletada;
 import bo.edu.uagrm.backend.model.Usuario;
+import bo.edu.uagrm.backend.model.Tramite;
+import bo.edu.uagrm.backend.model.ConexionFlujo;
 import bo.edu.uagrm.backend.repository.AreaRepository;
 import bo.edu.uagrm.backend.repository.PoliticaNegocioRepository;
 import bo.edu.uagrm.backend.repository.RolRepository;
 import bo.edu.uagrm.backend.repository.TareaCompletadaRepository;
 import bo.edu.uagrm.backend.repository.UsuarioRepository;
+import bo.edu.uagrm.backend.repository.TramiteRepository;
+import bo.edu.uagrm.backend.repository.ClienteRepository;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +36,8 @@ public class TareaFuncionarioService {
     private final AreaRepository areaRepository;
     private final PoliticaNegocioRepository politicaRepository;
     private final TareaCompletadaRepository completadaRepository;
+    private final TramiteRepository tramiteRepository;
+    private final ClienteRepository clienteRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public TareaFuncionarioService(
@@ -38,14 +45,19 @@ public class TareaFuncionarioService {
             RolRepository rolRepository,
             AreaRepository areaRepository,
             PoliticaNegocioRepository politicaRepository,
-            TareaCompletadaRepository completadaRepository
+            TareaCompletadaRepository completadaRepository,
+            TramiteRepository tramiteRepository,
+            ClienteRepository clienteRepository
     ) {
         this.usuarioRepository = usuarioRepository;
         this.rolRepository = rolRepository;
         this.areaRepository = areaRepository;
         this.politicaRepository = politicaRepository;
         this.completadaRepository = completadaRepository;
+        this.tramiteRepository = tramiteRepository;
+        this.clienteRepository = clienteRepository;
     }
+
 
     public Optional<TareaPendienteResponse> obtenerPendiente(String usuarioId) {
         List<TareaPendienteResponse> pendientes = listarPendientes(usuarioId);
@@ -63,38 +75,43 @@ public class TareaFuncionarioService {
         }
 
         String areaId = usuario.getAreaId();
-        List<PoliticaNegocio> politicas = politicaRepository.findAll();
+        List<Tramite> tramitesActivos = tramiteRepository.findByEstado("En curso");
         List<TareaPendienteResponse> pendientes = new ArrayList<>();
 
-        for (PoliticaNegocio politica : politicas) {
-            if (politica.getId() == null) {
+        for (Tramite tramite : tramitesActivos) {
+            Optional<PoliticaNegocio> politicaOpt = politicaRepository.findById(tramite.getPoliticaId());
+            if (politicaOpt.isEmpty()) {
                 continue;
             }
-            List<TareaPendienteResponse.AreaForm> forms = getAreaFormsFromPolitica(politica, areaId);
-            for (TareaPendienteResponse.AreaForm areaForm : forms) {
-                String nodeId = areaForm.getLaneId();
-                boolean completada = false;
-                if (nodeId != null && !nodeId.isEmpty()) {
-                    completada = completadaRepository.existsByUsuarioIdAndPoliticaIdAndAreaIdAndNodeId(
-                            usuarioId,
-                            politica.getId(),
-                            areaId,
-                            nodeId
-                    );
-                } else {
-                    completada = completadaRepository.existsByUsuarioIdAndPoliticaIdAndAreaId(
-                            usuarioId,
-                            politica.getId(),
-                            areaId
-                    );
-                }
+            PoliticaNegocio politica = politicaOpt.get();
+            String nodoActualId = tramite.getNodoActualId();
+            if (nodoActualId == null || nodoActualId.isEmpty()) {
+                continue;
+            }
 
-                if (!completada) {
+            // Validar si el nodo actual pertenece al area del funcionario
+            TareaPendienteResponse.AreaForm areaForm = getSpecificNodeFormFromPolitica(politica, nodoActualId, areaId);
+            if (areaForm != null) {
+                // Verificar si ya fue completado para esta instancia de tramite
+                boolean completado = completadaRepository.findAll().stream()
+                        .anyMatch(tc -> tramite.getId().equals(tc.getTramiteId()) && nodoActualId.equals(tc.getNodeId()));
+
+                if (!completado) {
+                    // Buscar nombre del cliente
+                    String clienteNombre = "Cliente Desconocido";
+                    Optional<Usuario> clienteUsuarioOpt = usuarioRepository.findById(tramite.getClienteId());
+                    if (clienteUsuarioOpt.isPresent()) {
+                        clienteNombre = clienteUsuarioOpt.get().getNombre();
+                    }
+
                     TareaPendienteResponse response = new TareaPendienteResponse();
                     response.setPoliticaId(politica.getId());
                     response.setPoliticaNombre(politica.getNombre());
                     response.setAreaId(areaId);
                     response.setAreaForm(areaForm);
+                    response.setTramiteId(tramite.getId());
+                    response.setTramiteCodigo(tramite.getCodigo());
+                    response.setClienteNombre(clienteNombre);
                     pendientes.add(response);
                 }
             }
@@ -112,6 +129,9 @@ public class TareaFuncionarioService {
             throw new ConflictException("El usuario solo puede completar tareas de su propia area");
         }
 
+        Tramite tramite = tramiteRepository.findById(request.getTramiteId())
+                .orElseThrow(() -> new NotFoundException("Tramite no encontrado para la tarea"));
+
         PoliticaNegocio politica = politicaRepository.findById(request.getPoliticaId())
                 .orElseThrow(() -> new NotFoundException("Politica no encontrada"));
 
@@ -127,21 +147,9 @@ public class TareaFuncionarioService {
             throw new NotFoundException("No existe formulario asignado para la tarea y area especificada");
         }
 
-        boolean yaExiste;
-        if (request.getNodeId() != null && !request.getNodeId().isEmpty()) {
-            yaExiste = completadaRepository.existsByUsuarioIdAndPoliticaIdAndAreaIdAndNodeId(
-                    request.getUsuarioId(),
-                    request.getPoliticaId(),
-                    request.getAreaId(),
-                    request.getNodeId()
-            );
-        } else {
-            yaExiste = completadaRepository.existsByUsuarioIdAndPoliticaIdAndAreaId(
-                    request.getUsuarioId(),
-                    request.getPoliticaId(),
-                    request.getAreaId()
-            );
-        }
+        boolean yaExiste = completadaRepository.findAll().stream()
+                .anyMatch(tc -> request.getTramiteId().equals(tc.getTramiteId()) && request.getNodeId().equals(tc.getNodeId()));
+
         if (yaExiste) {
             throw new ConflictException("La tarea ya fue completada");
         }
@@ -151,64 +159,101 @@ public class TareaFuncionarioService {
         tarea.setPoliticaId(request.getPoliticaId());
         tarea.setAreaId(request.getAreaId());
         tarea.setNodeId(request.getNodeId());
+        tarea.setTramiteId(request.getTramiteId());
         tarea.setRespuesta(request.getRespuesta());
         completadaRepository.save(tarea);
-    }
 
-    public List<SeguimientoTramiteResponse> listarSeguimiento(String usuarioId) {
-        Usuario usuario = usuarioRepository.findById(usuarioId)
-                .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
-        validarNoFuncionario(usuario.getRolId());
+        // Avanzar el tramite al siguiente nodo del flujo
+        List<ConexionFlujo> conexionesSalientes = new ArrayList<>();
+        for (ConexionFlujo conn : politica.getConexiones()) {
+            if (conn.getNodoOrigenId().equals(request.getNodeId())) {
+                conexionesSalientes.add(conn);
+            }
+        }
 
-        List<TareaCompletada> completadas = completadaRepository.findAll();
-        List<SeguimientoTramiteResponse> response = new ArrayList<>();
-
-        for (TareaCompletada tarea : completadas) {
-            SeguimientoTramiteResponse item = new SeguimientoTramiteResponse();
-            item.setTareaId(tarea.getId());
-            item.setPoliticaId(tarea.getPoliticaId());
-            item.setAreaId(tarea.getAreaId());
-            item.setRespuesta(tarea.getRespuesta());
-            item.setCompletedAt(tarea.getCreatedAt());
-
-            politicaRepository.findById(tarea.getPoliticaId()).ifPresent(p -> {
-                item.setPoliticaNombre(p.getNombre());
-                TareaPendienteResponse.AreaForm areaForm = null;
-                if (tarea.getNodeId() != null && !tarea.getNodeId().isEmpty()) {
-                    areaForm = getSpecificNodeFormFromPolitica(p, tarea.getNodeId(), tarea.getAreaId());
-                } else {
-                    List<TareaPendienteResponse.AreaForm> forms = getAreaFormsFromPolitica(p, tarea.getAreaId());
-                    if (!forms.isEmpty()) {
-                        areaForm = forms.get(0);
+        if (conexionesSalientes.isEmpty()) {
+            // No hay salida, terminar
+            tramite.setEstado("Completado");
+            tramite.setNodoActualId("end");
+        } else if (conexionesSalientes.size() == 1) {
+            // Transicion lineal secuencial
+            String nextNodeId = conexionesSalientes.get(0).getNodoDestinoId();
+            if (checkNodeIsEnd(politica, nextNodeId)) {
+                tramite.setEstado("Completado");
+                tramite.setNodoActualId("end");
+            } else {
+                tramite.setNodoActualId(nextNodeId);
+            }
+        } else {
+            // Gateway / Decision con multiples caminos
+            String selectedNextNodeId = null;
+            String decisionValue = null;
+            
+            // Buscar si la respuesta contiene un valor "Si" o "No"
+            for (Object val : request.getRespuesta().values()) {
+                if (val != null) {
+                    String s = val.toString().trim();
+                    if ("Si".equalsIgnoreCase(s) || "No".equalsIgnoreCase(s)) {
+                        decisionValue = s;
+                        break;
                     }
                 }
-                if (areaForm != null) {
-                    item.setFormularioNombre(areaForm.getFormName());
-                    item.setFormularioCampos(areaForm.getFields());
+            }
+
+            // Fallback si no es Si/No explicito
+            if (decisionValue == null && !request.getRespuesta().isEmpty()) {
+                decisionValue = request.getRespuesta().values().iterator().next().toString().trim();
+            }
+
+            if (decisionValue != null) {
+                for (ConexionFlujo conn : conexionesSalientes) {
+                    if (decisionValue.equalsIgnoreCase(conn.getCondicion())) {
+                        selectedNextNodeId = conn.getNodoDestinoId();
+                        break;
+                    }
                 }
-            });
-            usuarioRepository.findById(tarea.getUsuarioId()).ifPresent(u -> {
-                item.setFuncionarioId(u.getId());
-                item.setFuncionarioNombre(u.getNombre());
-                item.setFuncionarioCorreo(u.getCorreo());
-            });
-            areaRepository.findById(tarea.getAreaId()).ifPresent(a -> item.setAreaNombre(a.getNombre()));
+            }
 
-            response.add(item);
+            // Fallback al primer camino si nada coincide
+            if (selectedNextNodeId == null) {
+                selectedNextNodeId = conexionesSalientes.get(0).getNodoDestinoId();
+            }
+
+            if (checkNodeIsEnd(politica, selectedNextNodeId)) {
+                tramite.setEstado("Completado");
+                tramite.setNodoActualId("end");
+            } else {
+                tramite.setNodoActualId(selectedNextNodeId);
+            }
         }
-        return response;
+
+        tramite.setUpdatedAt(LocalDateTime.now());
+        tramiteRepository.save(tramite);
     }
 
-    public void eliminarCompletada(String usuarioIdSolicitante, String tareaId) {
-        Usuario usuario = usuarioRepository.findById(usuarioIdSolicitante)
-                .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
-        validarNoFuncionario(usuario.getRolId());
-
-        TareaCompletada completada = completadaRepository.findById(tareaId)
-                .orElseThrow(() -> new NotFoundException("Formulario completado no encontrado"));
-
-        completadaRepository.delete(completada);
+    private boolean checkNodeIsEnd(PoliticaNegocio politica, String nodeId) {
+        if (politica.getDiagrama() == null) {
+            return false;
+        }
+        try {
+            Map<String, Object> payload = objectMapper.readValue(politica.getDiagrama(), new TypeReference<>() {});
+            List<?> nodes = (List<?>) payload.get("nodes");
+            if (nodes != null) {
+                for (Object item : nodes) {
+                    if (item instanceof Map<?, ?> nodeMap) {
+                        String id = (String) nodeMap.get("id");
+                        String type = (String) nodeMap.get("type");
+                        if (nodeId.equals(id)) {
+                            return "end".equalsIgnoreCase(type);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
+
 
     @SuppressWarnings("unchecked")
     private List<TareaPendienteResponse.AreaForm> getAreaFormsFromPolitica(PoliticaNegocio politica, String areaId) {

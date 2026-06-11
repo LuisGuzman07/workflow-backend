@@ -16,6 +16,7 @@ public class TareaCompletada {
     private String politicaId;
     private String areaId;
     private String nodeId;
+    private String tramiteId;
     private Map<String, Object> respuesta;
 
     @CreatedDate
@@ -24,6 +25,15 @@ public class TareaCompletada {
     public String getId() {
         return id;
     }
+
+    public String getTramiteId() {
+        return tramiteId;
+    }
+
+    public void setTramiteId(String tramiteId) {
+        this.tramiteId = tramiteId;
+    }
+
 
     public String getNodeId() {
         return nodeId;

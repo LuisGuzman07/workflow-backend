@@ -1,7 +1,6 @@
 package bo.edu.uagrm.backend.controller;
 
 import bo.edu.uagrm.backend.dto.CompletarTareaRequest;
-import bo.edu.uagrm.backend.dto.SeguimientoTramiteResponse;
 import bo.edu.uagrm.backend.dto.TareaPendienteResponse;
 import bo.edu.uagrm.backend.services.TareaFuncionarioService;
 import jakarta.validation.Valid;
@@ -39,14 +38,4 @@ public class TareaFuncionarioController {
         return Map.of("mensaje", "Tarea completada exitosamente");
     }
 
-    @GetMapping("/seguimiento")
-    public List<SeguimientoTramiteResponse> seguimiento(@RequestParam String usuarioId) {
-        return tareaFuncionarioService.listarSeguimiento(usuarioId);
-    }
-
-    @DeleteMapping("/completadas/{tareaId}")
-    public Map<String, String> eliminarCompletada(@PathVariable String tareaId, @RequestParam String usuarioId) {
-        tareaFuncionarioService.eliminarCompletada(usuarioId, tareaId);
-        return Map.of("mensaje", "Formulario completado eliminado");
-    }
 }
